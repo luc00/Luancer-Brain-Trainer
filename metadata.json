@@ -1,0 +1,8 @@
+{
+  "name": "Luancer Brain Trainer",
+  "description": "App neuroscientifica di allenamento cognitivo, memoria, focus e potenziamento del carattere con intelligenza artificiale adattiva. Quality you can trust.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
