@@ -31,6 +31,7 @@ import { RealLifeChallengesView } from './character/RealLifeChallengesView';
 import { EveningStoicJournalView } from './character/EveningStoicJournalView';
 import { DailyChallengeHeroCard } from './character/DailyChallengeHeroCard';
 import { CognitiveFocusWidgets } from './character/CognitiveFocusWidgets';
+import { PersonalJourneyPaceCard } from './character/PersonalJourneyPaceCard';
 import { MLReceptivityCard } from './MLReceptivityCard';
 import { MicroWorkoutPlan } from '../types';
 
@@ -42,6 +43,9 @@ interface Props {
   onRefreshProfile?: () => void;
   onOpenReminderSettings?: () => void;
   onLaunchMicroWorkout?: (plan: MicroWorkoutPlan) => void;
+  onOpenAccountMenu?: () => void;
+  onOpenAuth?: () => void;
+  isLoggedIn?: boolean;
 }
 
 export const DailyWorkout: React.FC<Props> = ({
@@ -52,6 +56,9 @@ export const DailyWorkout: React.FC<Props> = ({
   onRefreshProfile,
   onOpenReminderSettings,
   onLaunchMicroWorkout,
+  onOpenAccountMenu = () => {},
+  onOpenAuth = () => {},
+  isLoggedIn = false,
 }) => {
   const [activeView, setActiveView] = useState<
     'none' | 'dual-n-back' | 'stroop' | 'dilemma' | 'breathing' | 'deep-work' | 'challenges' | 'journal'
@@ -227,6 +234,14 @@ export const DailyWorkout: React.FC<Props> = ({
           </div>
         </div>
       </div>
+
+      {/* Il Tuo Passo & Partenza da Zero • Ognuno ha il suo ritmo */}
+      <PersonalJourneyPaceCard
+        profile={profile}
+        onOpenAccountMenu={onOpenAccountMenu}
+        onOpenAuth={onOpenAuth}
+        isLoggedIn={isLoggedIn}
+      />
 
       {/* Real-time ML Circadian Receptivity Engine */}
       <MLReceptivityCard

@@ -1,0 +1,67 @@
+name: Create GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag or version for the release (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+      release_title:
+        description: 'Title for the release'
+        required: false
+        default: 'Luancer Brain Trainer v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build application
+        run: npm run build
+
+      - name: Prepare Release Bundle
+        run: |
+          mkdir -p release-pkg
+          tar -czf release-pkg/luancer-brain-trainer-build.tar.gz dist/
+          zip -r release-pkg/luancer-brain-trainer-build.zip dist/
+
+      - name: Publish Release to GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
+          name: ${{ github.event.inputs.release_title || github.ref_name }}
+          files: |
+            release-pkg/luancer-brain-trainer-build.tar.gz
+            release-pkg/luancer-brain-trainer-build.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ### 🧠 Luancer Brain Trainer Release
+
+            **Novità e Aggiornamenti:**
+            - **Autenticazione Utente con Email & Password**: creazione account protetta, login persistente e salvataggio locale/server.
+            - **Progressione da Zero**: ogni utente inizia dal grado 0 ("Mente del Principiante") e cresce al proprio ritmo.
+            - **Ritmo di Allenamento Personalizzato**: selezione tra *Passo Gentile* (1 micro-sessione/die), *Passo Costante* (2 sessioni/die) e *Passo Intenso* (fino a 4 sfide/die).
+            - **Cognitive Focus Widgets**: Deep Work Timer con onde binaurali, Gratitude Check-in e sfide quotidiane personalizzabili.
+            - **Smartwatch Hub**: sincronizzazione e telemetria per wearable.
+            - **AI Coach Dialogue & Voice**: analisi predittiva e supporto motivazionale adattivo.

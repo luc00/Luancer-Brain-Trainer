@@ -180,7 +180,21 @@ export interface ReminderMLSettings {
   completedMicroWorkoutsCount: number;
 }
 
+export type UserTrainingPace = 'gentle' | 'steady' | 'intense';
+
+export interface UserAccount {
+  id: string;
+  email: string;
+  name: string;
+  trainingPace: UserTrainingPace;
+  createdAt: number;
+  lastLoginAt?: number;
+}
+
 export interface UserProfile {
+  id?: string;
+  email?: string;
+  accountId?: string;
   name: string;
   title: string;
   level: number;
@@ -202,6 +216,9 @@ export interface UserProfile {
   sleepHygieneScore?: number;
   traitsHistory?: TraitSnapshot[];
   reminderSettings?: ReminderMLSettings;
+  trainingPace?: UserTrainingPace;
+  isFreshStart?: boolean;
+  accountCreatedAt?: number;
 }
 
 export interface CharacterDilemmaOption {

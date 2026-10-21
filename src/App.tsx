@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { loadProfile, recordGameSession, updateCharacterTraits } from './utils/storage';
 import { soundFx } from './utils/audio';
 import { watchBridge, WatchState } from './utils/watchBridge';
-import { UserProfile, ActiveTab, GameSessionResult, CharacterTraits } from './types';
+import { UserProfile, ActiveTab, GameSessionResult, CharacterTraits, UserAccount } from './types';
 import { DailyWorkout } from './components/DailyWorkout';
 import { BrainGamesHub } from './components/games/BrainGamesHub';
 import { CharacterGymHub } from './components/character/CharacterGymHub';
@@ -13,6 +13,9 @@ import { BinauralModal } from './components/BinauralModal';
 import { LanguageModal } from './components/LanguageModal';
 import { SmartwatchHubModal } from './components/watch/SmartwatchHubModal';
 import { LuancerLogo } from './components/LuancerLogo';
+import { AuthModal } from './components/auth/AuthModal';
+import { UserAccountMenuModal } from './components/auth/UserAccountMenuModal';
+import { getStoredUser, syncProfileBackground } from './utils/auth';
 import { LanguageProvider, useLanguage } from './context/LanguageContext';
 import { 
   Flame, 
@@ -26,7 +29,8 @@ import {
   Zap, 
   Activity,
   Watch,
-  Globe
+  Globe,
+  User as UserIcon
 } from 'lucide-react';
 
 import { SmartNudgeBanner } from './components/SmartNudgeBanner';
@@ -37,6 +41,10 @@ import { MicroWorkoutPlan } from './types';
 function AppContent() {
   const { t, currentLanguageOption } = useLanguage();
   const [profile, setProfile] = useState<UserProfile>(loadProfile);
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(getStoredUser);
+  const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [accountMenuOpen, setAccountMenuOpen] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>('workout');
   const [binauralOpen, setBinauralOpen] = useState<boolean>(false);
   const [languageOpen, setLanguageOpen] = useState<boolean>(false);
@@ -78,11 +86,13 @@ function AppContent() {
   const handleRecordSession = (sessionData: Omit<GameSessionResult, 'id' | 'timestamp' | 'gciDelta' | 'xpEarned'>) => {
     const updated = recordGameSession(sessionData);
     setProfile(updated);
+    syncProfileBackground(updated);
   };
 
   const handleUpdateTraits = (delta: Partial<CharacterTraits>, xp: number) => {
     const updated = updateCharacterTraits(delta, xp);
     setProfile(updated);
+    syncProfileBackground(updated);
   };
 
   const handleAwardWatchXP = (xp: number, summary: string) => {
@@ -91,6 +101,17 @@ function AppContent() {
       xp
     );
     setProfile(updated);
+    syncProfileBackground(updated);
+  };
+
+  const handleAuthSuccess = (user: UserAccount, newProfile: UserProfile) => {
+    setCurrentUser(user);
+    setProfile(newProfile);
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setProfile(loadProfile());
   };
 
   const handleTabChange = (tab: ActiveTab) => {
@@ -197,8 +218,43 @@ function AppContent() {
             </button>
           </nav>
 
-          {/* Zone 3: Utility Controls & Audio / Wearables */}
+          {/* Zone 3: Utility Controls & Audio / Wearables & User Account */}
           <div className="flex items-center gap-1.5">
+            {/* User Account / Auth Button */}
+            {currentUser ? (
+              <button
+                onClick={() => {
+                  soundFx.playClick();
+                  setAccountMenuOpen(true);
+                }}
+                className="p-1 px-2 rounded-xl bg-white/90 hover:bg-white border border-[#CBDDD2] text-[#1E4332] shadow-2xs transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                title="Account & Il Tuo Passo"
+              >
+                <div className="w-5 h-5 rounded-lg bg-[#2F654A] text-white text-[11px] font-black flex items-center justify-center">
+                  {(currentUser.name || 'U').charAt(0).toUpperCase()}
+                </div>
+                <span className="text-[11px] font-bold hidden sm:inline max-w-[70px] truncate">
+                  {currentUser.name}
+                </span>
+                <span className="text-[11px]" title={`Passo: ${profile.trainingPace || 'steady'}`}>
+                  {profile.trainingPace === 'gentle' ? '🌿' : profile.trainingPace === 'intense' ? '⚡' : '⚖️'}
+                </span>
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  soundFx.playClick();
+                  setAuthMode('login');
+                  setAuthModalOpen(true);
+                }}
+                className="p-1.5 px-2.5 rounded-xl bg-[#1E4332] hover:bg-[#153424] text-white border border-[#1E4332] shadow-2xs transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                title="Accedi o Crea Account (Da zero)"
+              >
+                <UserIcon className="w-3.5 h-3.5" />
+                <span className="text-[11px] font-bold hidden sm:inline">Accedi</span>
+              </button>
+            )}
+
             {/* Smart Watch Companion Button */}
             <button
               onClick={() => {
@@ -272,6 +328,12 @@ function AppContent() {
                   onRefreshProfile={() => setProfile(loadProfile())}
                   onOpenReminderSettings={() => setReminderModalOpen(true)}
                   onLaunchMicroWorkout={handleLaunchMicroWorkout}
+                  onOpenAccountMenu={() => setAccountMenuOpen(true)}
+                  onOpenAuth={() => {
+                    setAuthMode('register');
+                    setAuthModalOpen(true);
+                  }}
+                  isLoggedIn={Boolean(currentUser)}
                 />
               )}
 
@@ -398,6 +460,36 @@ function AppContent() {
           onClose={() => setWatchOpen(false)}
           profile={profile}
           onAwardXP={handleAwardWatchXP}
+        />
+
+        {/* User Auth Modal (Login / Sign Up from Zero) */}
+        <AuthModal
+          isOpen={authModalOpen}
+          onClose={() => setAuthModalOpen(false)}
+          onAuthSuccess={handleAuthSuccess}
+          initialMode={authMode}
+        />
+
+        {/* User Account & Pacing Roadmap Modal */}
+        <UserAccountMenuModal
+          isOpen={accountMenuOpen}
+          onClose={() => setAccountMenuOpen(false)}
+          currentUser={currentUser}
+          profile={profile}
+          onProfileUpdated={(up) => {
+            setProfile(up);
+            if (currentUser) {
+              setCurrentUser({
+                ...currentUser,
+                trainingPace: up.trainingPace || currentUser.trainingPace,
+              });
+            }
+          }}
+          onLogout={handleLogout}
+          onOpenAuthModal={() => {
+            setAuthMode('login');
+            setAuthModalOpen(true);
+          }}
         />
       </div>
     </div>

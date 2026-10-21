@@ -1,4 +1,4 @@
-import { UserProfile, GameSessionResult, CognitiveCategory, CharacterTraits, ReminderMLSettings, MicroWorkoutPlan } from '../types';
+import { UserProfile, GameSessionResult, CognitiveCategory, CharacterTraits, ReminderMLSettings, MicroWorkoutPlan, UserTrainingPace } from '../types';
 
 const STORAGE_KEY = 'synapse_ai_user_profile_v1';
 
@@ -285,6 +285,88 @@ export function recordPillarExerciseCompleted(pillarId: string, xpReward: number
   return finalProfile;
 }
 
+export function createZeroProfile(
+  name: string,
+  email: string = '',
+  pace: UserTrainingPace = 'steady'
+): UserProfile {
+  const today = new Date().toISOString().split('T')[0];
+  const zeroScores = {
+    memory: 350,
+    speed: 350,
+    logic: 350,
+    focus: 350,
+    language: 350,
+    character: 350,
+  };
+  const zeroTraits: CharacterTraits = {
+    resilience: 30,
+    temperance: 30,
+    wisdom: 30,
+    courage: 30,
+    emotionalMastery: 30,
+    communication: 30,
+    selfEsteem: 30,
+    mindset: 30,
+    positivity: 30,
+  };
+
+  return {
+    name: name.trim() || 'Nuovo Iniziato',
+    email: email.toLowerCase().trim(),
+    title: 'Principiante Consapevole (Grado 0)',
+    level: 1,
+    xp: 0,
+    xpToNextLevel: 250,
+    gci: 350,
+    brainAge: 30,
+    streak: 0,
+    lastTrainedDate: '',
+    scores: zeroScores,
+    characterTraits: zeroTraits,
+    completedWorkoutsCount: 0,
+    sessionsHistory: [],
+    unlockedBadges: [],
+    journalEntries: [],
+    completedChallenges: [],
+    completedPillarExercises: [],
+    traitsHistory: [
+      {
+        date: today,
+        timestamp: Date.now(),
+        label: 'Punto di Partenza (Grado 0)',
+        traits: zeroTraits,
+      },
+    ],
+    reminderSettings: {
+      ...DEFAULT_REMINDER_SETTINGS,
+      dailyFrequency: pace === 'gentle' ? 1 : pace === 'steady' ? 2 : 4,
+      completedMicroWorkoutsCount: 0,
+    },
+    trainingPace: pace,
+    isFreshStart: true,
+    accountCreatedAt: Date.now(),
+  };
+}
+
+export function setActiveProfile(profile: UserProfile): void {
+  saveProfile(profile);
+}
+
+export function setUserPace(pace: UserTrainingPace): UserProfile {
+  const profile = getProfile();
+  const updated: UserProfile = {
+    ...profile,
+    trainingPace: pace,
+    reminderSettings: {
+      ...(profile.reminderSettings || DEFAULT_REMINDER_SETTINGS),
+      dailyFrequency: pace === 'gentle' ? 1 : pace === 'steady' ? 2 : 4,
+    },
+  };
+  saveProfile(updated);
+  return updated;
+}
+
 export function getProfile(): UserProfile {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -293,6 +375,59 @@ export function getProfile(): UserProfile {
       return INITIAL_PROFILE;
     }
     const parsed = JSON.parse(raw) as Partial<UserProfile>;
+    
+    // If it's a fresh zero-start account, preserve its zero-state completely
+    if (parsed.isFreshStart) {
+      const mergedZero: UserProfile = {
+        name: parsed.name || 'Nuovo Iniziato',
+        email: parsed.email || '',
+        title: parsed.title || 'Principiante Consapevole (Grado 0)',
+        level: parsed.level ?? 1,
+        xp: parsed.xp ?? 0,
+        xpToNextLevel: parsed.xpToNextLevel ?? 250,
+        gci: parsed.gci ?? 350,
+        brainAge: parsed.brainAge ?? 30,
+        streak: parsed.streak ?? 0,
+        lastTrainedDate: parsed.lastTrainedDate ?? '',
+        scores: parsed.scores || {
+          memory: 350,
+          speed: 350,
+          logic: 350,
+          focus: 350,
+          language: 350,
+          character: 350,
+        },
+        characterTraits: parsed.characterTraits || {
+          resilience: 30,
+          temperance: 30,
+          wisdom: 30,
+          courage: 30,
+          emotionalMastery: 30,
+          communication: 30,
+          selfEsteem: 30,
+          mindset: 30,
+          positivity: 30,
+        },
+        completedWorkoutsCount: parsed.completedWorkoutsCount ?? 0,
+        sessionsHistory: Array.isArray(parsed.sessionsHistory) ? parsed.sessionsHistory : [],
+        unlockedBadges: Array.isArray(parsed.unlockedBadges) ? parsed.unlockedBadges : [],
+        completedChallenges: Array.isArray(parsed.completedChallenges) ? parsed.completedChallenges : [],
+        journalEntries: Array.isArray(parsed.journalEntries) ? parsed.journalEntries : [],
+        completedPillarExercises: Array.isArray(parsed.completedPillarExercises) ? parsed.completedPillarExercises : [],
+        traitsHistory: Array.isArray(parsed.traitsHistory) ? parsed.traitsHistory : [],
+        reminderSettings: {
+          ...DEFAULT_REMINDER_SETTINGS,
+          ...(parsed.reminderSettings || {}),
+        },
+        trainingPace: parsed.trainingPace || 'steady',
+        isFreshStart: true,
+        accountCreatedAt: parsed.accountCreatedAt,
+        accountId: parsed.accountId,
+        id: parsed.id,
+      };
+      return checkDailyStreak(mergedZero);
+    }
+
     const merged: UserProfile = {
       ...INITIAL_PROFILE,
       ...parsed,
@@ -314,6 +449,7 @@ export function getProfile(): UserProfile {
         ...DEFAULT_REMINDER_SETTINGS,
         ...(parsed.reminderSettings || {}),
       },
+      trainingPace: parsed.trainingPace || 'steady',
     };
     return checkDailyStreak(merged);
   } catch {
@@ -332,6 +468,11 @@ export function saveProfile(profile: UserProfile): void {
 }
 
 function checkDailyStreak(profile: UserProfile): UserProfile {
+  // If the user has never trained yet or has 0 streak, don't invent a streak
+  if (profile.streak === 0 || !profile.lastTrainedDate) {
+    return profile;
+  }
+
   const today = new Date().toISOString().split('T')[0];
   if (profile.lastTrainedDate === today) {
     return profile;
@@ -402,7 +543,7 @@ export function recordSession(result: Omit<GameSessionResult, 'id' | 'timestamp'
   }
 
   // Update Streak
-  let newStreak = profile.streak;
+  let newStreak = (profile.streak || 0);
   if (profile.lastTrainedDate !== today) {
     newStreak += 1;
   }
@@ -414,6 +555,12 @@ export function recordSession(result: Omit<GameSessionResult, 'id' | 'timestamp'
     gciDelta,
     xpEarned,
   };
+
+  // Badges: unlock first_synapse on first session
+  const unlockedBadges = [...(profile.unlockedBadges || [])];
+  if (!unlockedBadges.includes('first_synapse')) {
+    unlockedBadges.push('first_synapse');
+  }
 
   // Title based on level
   const titleIndex = Math.min(LEVEL_TITLES.length - 1, Math.max(0, newLevel - 1));
@@ -430,7 +577,8 @@ export function recordSession(result: Omit<GameSessionResult, 'id' | 'timestamp'
     streak: newStreak,
     lastTrainedDate: today,
     scores: updatedScores,
-    completedWorkoutsCount: profile.completedWorkoutsCount + 1,
+    unlockedBadges,
+    completedWorkoutsCount: (profile.completedWorkoutsCount || 0) + 1,
     sessionsHistory: [sessionEntry, ...profile.sessionsHistory.slice(0, 49)],
   };
 

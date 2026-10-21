@@ -1,5 +1,7 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
+import crypto from "crypto";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 
@@ -9,6 +11,149 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: "10mb" }));
+
+// Persistent File-Based Auth Database
+const DATA_DIR = path.join(process.cwd(), "data");
+const USERS_FILE = path.join(DATA_DIR, "users.json");
+
+interface StoredUserRecord {
+  id: string;
+  email: string;
+  name: string;
+  salt: string;
+  passwordHash: string;
+  trainingPace: "gentle" | "steady" | "intense";
+  token?: string;
+  createdAt: number;
+  lastLoginAt: number;
+  profile: any;
+}
+
+function ensureDataDir() {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+}
+
+function loadUsers(): Record<string, StoredUserRecord> {
+  ensureDataDir();
+  if (!fs.existsSync(USERS_FILE)) {
+    return {};
+  }
+  try {
+    const raw = fs.readFileSync(USERS_FILE, "utf-8");
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error("Error reading users.json:", err);
+    return {};
+  }
+}
+
+function saveUsers(users: Record<string, StoredUserRecord>) {
+  ensureDataDir();
+  try {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error writing users.json:", err);
+  }
+}
+
+function hashPassword(password: string, salt: string): string {
+  return crypto.scryptSync(password, salt, 64).toString("hex");
+}
+
+function createZeroProfile(name: string, email: string, pace: "gentle" | "steady" | "intense" = "steady", userId: string = "") {
+  const today = new Date().toISOString().split("T")[0];
+  return {
+    id: userId,
+    accountId: userId,
+    name: name.trim(),
+    email: email.toLowerCase().trim(),
+    title: "Principiante Consapevole (Grado 0)",
+    level: 1,
+    xp: 0,
+    xpToNextLevel: 250,
+    gci: 350, // Starting neutral baseline, starts from zero and grows step-by-step
+    brainAge: 30,
+    streak: 0,
+    lastTrainedDate: "",
+    scores: {
+      memory: 350,
+      speed: 350,
+      logic: 350,
+      focus: 350,
+      language: 350,
+      character: 350,
+    },
+    characterTraits: {
+      resilience: 30,
+      temperance: 30,
+      wisdom: 30,
+      courage: 30,
+      emotionalMastery: 30,
+      communication: 30,
+      selfEsteem: 30,
+      mindset: 30,
+      positivity: 30,
+    },
+    completedWorkoutsCount: 0,
+    sessionsHistory: [],
+    unlockedBadges: [],
+    journalEntries: [],
+    completedChallenges: [],
+    completedPillarExercises: [],
+    traitsHistory: [
+      {
+        date: today,
+        timestamp: Date.now(),
+        label: "Punto di Partenza (Grado 0)",
+        traits: {
+          resilience: 30,
+          temperance: 30,
+          wisdom: 30,
+          courage: 30,
+          emotionalMastery: 30,
+          communication: 30,
+          selfEsteem: 30,
+          mindset: 30,
+          positivity: 30,
+        },
+      },
+    ],
+    reminderSettings: {
+      notificationsEnabled: true,
+      autoSmartScheduling: true,
+      dailyFrequency: pace === "gentle" ? 1 : pace === "steady" ? 2 : 4,
+      quietHoursStart: 22,
+      quietHoursEnd: 7,
+      userChronotype: "auto_detected",
+      completedMicroWorkoutsCount: 0,
+    },
+    trainingPace: pace,
+    isFreshStart: true,
+    accountCreatedAt: Date.now(),
+  };
+}
+
+// Token helper
+function extractToken(req: express.Request): string | null {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    return authHeader.substring(7).trim();
+  }
+  return null;
+}
+
+// Find user by token
+function getUserByToken(token: string): StoredUserRecord | null {
+  const users = loadUsers();
+  for (const key of Object.keys(users)) {
+    if (users[key].token === token) {
+      return users[key];
+    }
+  }
+  return null;
+}
 
 // Lazy initialization of Gemini client
 function getGenAIClient() {
@@ -27,6 +172,252 @@ function getGenAIClient() {
 // Health check
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", aiEnabled: Boolean(process.env.GEMINI_API_KEY) });
+});
+
+// AUTH ENDPOINTS: Register, Login, Me, Sync, Pace, Reset
+app.post("/api/auth/register", (req, res) => {
+  try {
+    const { email, password, name, trainingPace = "steady" } = req.body;
+
+    if (!email || typeof email !== "string" || !email.includes("@")) {
+      return res.status(400).json({ error: "Indirizzo email non valido." });
+    }
+    if (!password || typeof password !== "string" || password.length < 6) {
+      return res.status(400).json({ error: "La password deve contenere almeno 6 caratteri." });
+    }
+    const cleanName = typeof name === "string" && name.trim().length > 0 ? name.trim() : email.split("@")[0];
+    const cleanEmail = email.toLowerCase().trim();
+    const validPaces = ["gentle", "steady", "intense"];
+    const pace = validPaces.includes(trainingPace) ? trainingPace : "steady";
+
+    const users = loadUsers();
+    if (users[cleanEmail]) {
+      return res.status(409).json({ error: "Un account con questa email esiste già. Effettua l'accesso." });
+    }
+
+    const salt = crypto.randomBytes(16).toString("hex");
+    const passwordHash = hashPassword(password, salt);
+    const token = crypto.randomBytes(32).toString("hex");
+    const userId = `user_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+    const zeroProfile = createZeroProfile(cleanName, cleanEmail, pace, userId);
+
+    const newRecord: StoredUserRecord = {
+      id: userId,
+      email: cleanEmail,
+      name: cleanName,
+      salt,
+      passwordHash,
+      trainingPace: pace,
+      token,
+      createdAt: Date.now(),
+      lastLoginAt: Date.now(),
+      profile: zeroProfile,
+    };
+
+    users[cleanEmail] = newRecord;
+    saveUsers(users);
+
+    const safeUser = {
+      id: userId,
+      email: cleanEmail,
+      name: cleanName,
+      trainingPace: pace,
+      createdAt: newRecord.createdAt,
+    };
+
+    res.json({
+      success: true,
+      user: safeUser,
+      profile: zeroProfile,
+      token,
+      message: "Benvenuto! Il tuo profilo parte da zero e progredirà al tuo passo.",
+    });
+  } catch (error) {
+    console.error("Auth register error:", error);
+    res.status(500).json({ error: "Errore durante la registrazione." });
+  }
+});
+
+app.post("/api/auth/login", (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email e password richieste." });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const users = loadUsers();
+    const user = users[cleanEmail];
+
+    if (!user) {
+      return res.status(401).json({ error: "Nessun account trovato con questa email. Registrati per iniziare da zero." });
+    }
+
+    const calculatedHash = hashPassword(password, user.salt);
+    if (calculatedHash !== user.passwordHash) {
+      return res.status(401).json({ error: "Password errata. Riprova." });
+    }
+
+    // Refresh token and update last login
+    const token = crypto.randomBytes(32).toString("hex");
+    user.token = token;
+    user.lastLoginAt = Date.now();
+    users[cleanEmail] = user;
+    saveUsers(users);
+
+    const safeUser = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      trainingPace: user.trainingPace,
+      createdAt: user.createdAt,
+      lastLoginAt: user.lastLoginAt,
+    };
+
+    res.json({
+      success: true,
+      user: safeUser,
+      profile: user.profile,
+      token,
+    });
+  } catch (error) {
+    console.error("Auth login error:", error);
+    res.status(500).json({ error: "Errore durante il login." });
+  }
+});
+
+app.get("/api/auth/me", (req, res) => {
+  try {
+    const token = extractToken(req);
+    if (!token) {
+      return res.status(401).json({ error: "Non autorizzato." });
+    }
+
+    const user = getUserByToken(token);
+    if (!user) {
+      return res.status(401).json({ error: "Sessione scaduta o non valida." });
+    }
+
+    const safeUser = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      trainingPace: user.trainingPace,
+      createdAt: user.createdAt,
+      lastLoginAt: user.lastLoginAt,
+    };
+
+    res.json({
+      success: true,
+      user: safeUser,
+      profile: user.profile,
+    });
+  } catch (error) {
+    console.error("Auth me error:", error);
+    res.status(500).json({ error: "Errore di autenticazione." });
+  }
+});
+
+app.post("/api/auth/sync", (req, res) => {
+  try {
+    const token = extractToken(req);
+    const { profile, trainingPace } = req.body;
+
+    if (!token) {
+      return res.status(401).json({ error: "Token mancante." });
+    }
+
+    const user = getUserByToken(token);
+    if (!user) {
+      return res.status(401).json({ error: "Utente non trovato." });
+    }
+
+    const users = loadUsers();
+    if (profile) {
+      user.profile = { ...user.profile, ...profile };
+    }
+    if (trainingPace) {
+      user.trainingPace = trainingPace;
+      if (user.profile) {
+        user.profile.trainingPace = trainingPace;
+      }
+    }
+
+    users[user.email] = user;
+    saveUsers(users);
+
+    res.json({ success: true, profile: user.profile });
+  } catch (error) {
+    console.error("Auth sync error:", error);
+    res.status(500).json({ error: "Errore sincronizzazione profilo." });
+  }
+});
+
+app.post("/api/auth/update-pace", (req, res) => {
+  try {
+    const token = extractToken(req);
+    const { pace } = req.body;
+
+    if (!token) {
+      return res.status(401).json({ error: "Token mancante." });
+    }
+
+    const validPaces = ["gentle", "steady", "intense"];
+    if (!validPaces.includes(pace)) {
+      return res.status(400).json({ error: "Passo non valido." });
+    }
+
+    const user = getUserByToken(token);
+    if (!user) {
+      return res.status(401).json({ error: "Utente non trovato." });
+    }
+
+    const users = loadUsers();
+    user.trainingPace = pace;
+    if (user.profile) {
+      user.profile.trainingPace = pace;
+      if (user.profile.reminderSettings) {
+        user.profile.reminderSettings.dailyFrequency = pace === "gentle" ? 1 : pace === "steady" ? 2 : 4;
+      }
+    }
+    users[user.email] = user;
+    saveUsers(users);
+
+    res.json({ success: true, pace, profile: user.profile });
+  } catch (error) {
+    console.error("Auth update-pace error:", error);
+    res.status(500).json({ error: "Errore aggiornamento passo." });
+  }
+});
+
+app.post("/api/auth/reset-to-zero", (req, res) => {
+  try {
+    const token = extractToken(req);
+    if (!token) {
+      return res.status(401).json({ error: "Token mancante." });
+    }
+
+    const user = getUserByToken(token);
+    if (!user) {
+      return res.status(401).json({ error: "Utente non trovato." });
+    }
+
+    const users = loadUsers();
+    const zeroProfile = createZeroProfile(user.name, user.email, user.trainingPace, user.id);
+
+    user.profile = zeroProfile;
+    users[user.email] = user;
+    saveUsers(users);
+
+    res.json({
+      success: true,
+      profile: zeroProfile,
+      message: "Profilo reimpostato al Punto Zero. Buon nuovo inizio!",
+    });
+  } catch (error) {
+    console.error("Auth reset-to-zero error:", error);
+    res.status(500).json({ error: "Errore reset profilo." });
+  }
 });
 
 // 1. AI Neuro-Coach Chat & Mentorship
